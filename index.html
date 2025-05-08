@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Wiegand ⇄ Болид (Пакетно)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body {
+      background: #111;
+      color: #eee;
+      font-family: sans-serif;
+      padding: 20px;
+    }
+    input, button {
+      padding: 10px;
+      margin: 5px 0;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      box-sizing: border-box;
+    }
+    input[type="text"], input[type="file"] {
+      background: #222;
+      color: #fff;
+      width: 100%;
+    }
+    button {
+      background: #4CAF50;
+      color: white;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 10px;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .field {
+      margin-bottom: 15px;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+    .row input {
+      flex: 1;
+    }
+    .error {
+      color: #f66;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Конвертер Wiegand ⇄ Болид</h2>
+
+  <!-- Поля -->
+  <div class="field">
+    <label>Ввод (FACILITY,ID):</label>
+    <input type="text" id="inputText" placeholder="123,00588">
+    <button onclick="parseText()">Конвертировать</button>
+    <div class="error" id="inputError"></div>
+  </div>
+
+  <div class="field">
+    <label>HEX (Wiegand 26):</label>
+    <input type="text" id="hexText">
+    <button onclick="copyToClipboard('hexText')">Скопировать</button>
+  </div>
+
+  <div class="field">
+    <label>Bolid HEX:</label>
+    <input type="text" id="bolidHexText">
+    <button onclick="copyToClipboard('bolidHexText')">Скопировать</button>
+  </div>
+
+  <div class="field">
+    <label>Bolid Цифровой формат:</label>
+    <input type="text" id="bolidDecimalText">
+    <button onclick="copyToClipboard('bolidDecimalText')">Скопировать</button>
+  </div>
+
+  <div class="field">
+    <button onclick="saveToTxt()">💾 Сохранить в TXT</button>
+  </div>
+
+  <hr>
+
+  <!-- Пакетная обработка -->
+  <h3>Пакетная обработка</h3>
+  <input type="file" id="fileInput" accept=".txt,.xlsx">
+  <button onclick="processFile()">📄 Обработать и сохранить TXT</button>
+
+  <script>
+    function pad(num, len) {
+      return num.toString().padStart(len, '0');
+    }
+
+    function clearErrors() {
+      document.getElementById('inputError').textContent = '';
+    }
+
+    function showError(id, message) {
+      document.getElementById(id).textContent = message;
+    }
+
+    function parseText() {
+      clearErrors();
+      const value = document.getElementById('inputText').value.trim();
+      const parts = value.split(',');
+      if (parts.length !== 2) {
+        showError('inputError', 'Введите две части через запятую');
+        return;
+      }
+      const fc = parseInt(parts[0]);
+      const id = parseInt(parts[1]);
+      if (isNaN(fc) || isNaN(id) || fc < 0 || fc > 255 || id < 0 || id > 65535) {
+        showError('inputError', 'Неверный формат: Facility 0-255, ID 0-65535');
+        return;
+      }
+      const bin = pad(fc.toString(2), 8) + pad(id.toString(2), 16);
+      const hex = pad(parseInt(bin, 2).toString(16).toUpperCase(), 6);
+      const bolidHex = '8A000000' + hex + '01';
+      const bolidDec = pad(fc * 65536 + id, 10);
+      document.getElementById('hexText').value = hex;
+      document.getElementById('bolidHexText').value = bolidHex;
+      document.getElementById('bolidDecimalText').value = bolidDec;
+    }
+
+    function copyToClipboard(id) {
+      const input = document.getElementById(id);
+      input.select();
+      document.execCommand('copy');
+    }
+
+    function saveToTxt() {
+      const hex = document.getElementById('hexText').value;
+      const bolidHex = document.getElementById('bolidHexText').value;
+      const dec = document.getElementById('bolidDecimalText').value;
+      const content = `HEX: ${hex}\nBOLID HEX: ${bolidHex}\nBOLID DECIMAL: ${dec}\n`;
+      const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "wiegand_bolid.txt";
+      link.click();
+    }
+
+    function processFile() {
+      const fileInput = document.getElementById("fileInput");
+      const file = fileInput.files[0];
+      if (!file) return alert("Выберите файл!");
+
+      const reader = new FileReader();
+
+      if (file.name.endsWith('.txt')) {
+        reader.onload = function(e) {
+          const lines = e.target.result.split(/\r?\n/);
+          const output = lines.map(line => convertLine(line)).filter(Boolean).join("\n");
+          downloadResult(output, "batch_result.txt");
+        };
+        reader.readAsText(file);
+      } else if (file.name.endsWith('.xlsx')) {
+        reader.onload = function(e) {
+          const data = new Uint8Array(e.target.result);
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheet = workbook.Sheets[workbook.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+          const output = rows.map(row => convertLine(row[0])).filter(Boolean).join("\n");
+          downloadResult(output, "batch_result.txt");
+        };
+        reader.readAsArrayBuffer(file);
+      } else {
+        alert("Поддерживаются только .txt и .xlsx");
+      }
+    }
+
+    function convertLine(line) {
+      if (!line) return null;
+      const parts = line.toString().trim().split(',');
+      if (parts.length !== 2) return null;
+
+      const fc = parseInt(parts[0]);
+      const id = parseInt(parts[1]);
+
+      if (isNaN(fc) || isNaN(id) || fc < 0 || fc > 255 || id < 0 || id > 65535) return null;
+
+      const bin = pad(fc.toString(2), 8) + pad(id.toString(2), 16);
+      const hex = pad(parseInt(bin, 2).toString(16).toUpperCase(), 6);
+      const bolidHex = '8A000000' + hex + '01';
+      const bolidDec = pad(fc * 65536 + id, 10);
+
+      return `${pad(fc,3)},${pad(id,5)} | HEX: ${hex} | BOLID_HEX: ${bolidHex} | DEC: ${bolidDec}`;
+    }
+
+    function downloadResult(text, filename) {
+      const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      link.click();
+    }
+  </script>
+</body>
+</html>
